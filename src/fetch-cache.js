@@ -1,26 +1,44 @@
 function createClient(options) {
   const { baseUrl, fetch, getAuthToken } = options;
+  const authToken = getAuthToken();
 
-  function get(path) {
-    const authToken = getAuthToken();
-
+  const get = (path) => {
     return fetch(baseUrl + path, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${authToken}`,
-      },
-    }).then((res) => {
-      if (!res.ok) {
-        throw new Error();
-      }
+      headers: buildHeaders(authToken),
+    }).then(handleResponse);
+  };
 
-      return res.json();
-    });
-  }
+  const post = (path, body) => {
+    return fetch(baseUrl + path, {
+      method: 'POST',
+      headers: buildHeaders(authToken),
+      body,
+    }).then(handleResponse);
+  };
 
   return {
     get,
+    post,
   };
+}
+
+function buildHeaders(authToken) {
+  const headers = {};
+
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+
+  return new Headers(headers);
+}
+
+function handleResponse(res) {
+  if (!res.ok) {
+    return res.json().then((r) => Promise.reject(r));
+  }
+
+  return res.json();
 }
 
 module.exports = {
