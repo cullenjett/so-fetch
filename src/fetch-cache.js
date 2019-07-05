@@ -1,6 +1,10 @@
 function createClient(options) {
   const { baseUrl, fetch, getAuthToken } = options;
-  const authToken = getAuthToken();
+
+  let authToken;
+  if (getAuthToken) {
+    authToken = getAuthToken();
+  }
 
   const get = (path) => {
     return fetch(baseUrl + path, {

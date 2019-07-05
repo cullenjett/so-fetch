@@ -20,7 +20,7 @@ const setup = (options) => {
 
   const defaultOptions = {
     baseUrl: 'http://localhost:3000',
-    getAuthToken: jest.fn(() => 'AUTH_TOKEN'),
+    getAuthToken: undefined,
     fetch,
   };
 
@@ -59,7 +59,9 @@ describe('createClient', () => {
     });
 
     it('pulls an auth token and appends it as the "Authorization" header', async () => {
-      const { get, fetch } = setup();
+      const { get, fetch } = setup({
+        getAuthToken: jest.fn(() => 'AUTH_TOKEN'),
+      });
 
       await get('/api');
 
@@ -109,7 +111,9 @@ describe('createClient', () => {
     });
 
     it('pulls an auth token and appends it as the "Authorization" header', async () => {
-      const { post, fetch } = setup();
+      const { post, fetch } = setup({
+        getAuthToken: jest.fn(() => 'AUTH_TOKEN'),
+      });
 
       await post('/api', { foo: 'bar' });
 
