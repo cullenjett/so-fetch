@@ -1,6 +1,6 @@
 const { Headers, Response } = require('node-fetch');
 
-const { createClient } = require('./fetch-cache');
+const { createClient } = require('./so-fetch');
 
 global.Headers = Headers;
 global.Response = Response;
