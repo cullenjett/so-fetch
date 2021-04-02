@@ -1,143 +1,213 @@
-const { Headers, Response } = require('node-fetch');
+const { Response, Headers } = require('node-fetch');
 
 const { createClient } = require('./so-fetch');
 
-global.Headers = Headers;
-global.Response = Response;
-
-const createFetchMock = (response = {}, status = 200) => {
-  return jest.fn(() => {
-    return Promise.resolve(
+const createFetchMock = ({
+  response = {},
+  status = 200,
+  url = 'http://localhost:3000',
+  responseOverride,
+} = {}) => {
+  return jest.fn().mockResolvedValue(
+    responseOverride ||
       new Response(JSON.stringify(response), {
         status,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        url,
       })
-    );
-  });
+  );
 };
 
-const setup = (options) => {
-  const fetch = createFetchMock();
-
-  const defaultOptions = {
+const setup = (options = {}) => {
+  const fetch = options.fetch || createFetchMock();
+  const http = createClient({
     baseUrl: 'http://localhost:3000',
-    getAuthToken: undefined,
-    fetch,
-  };
-
-  const client = createClient({
-    ...defaultOptions,
+    requestTransformers: [],
+    errorListeners: [],
     ...options,
+    fetch,
   });
 
   return {
-    ...client,
+    http,
     fetch,
   };
 };
 
-describe('createClient', () => {
-  describe('.get()', () => {
-    it('calls options.fetch', async () => {
-      const { get, fetch } = setup();
+describe('http', () => {
+  it('appends the given path to the baseUrl', async () => {
+    const { http, fetch } = setup();
 
-      await get('/api');
+    await http.get('/api');
 
-      expect(fetch).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api',
+      expect.any(Object)
+    );
+  });
+
+  it('transforms the request', async () => {
+    const getToken = jest.fn().mockResolvedValue('abc');
+
+    const { http, fetch } = setup({
+      requestTransformers: [
+        (request) => {
+          return {
+            ...request,
+            url: 'http://localhost:1234/foo',
+          };
+        },
+        async (request) => {
+          const token = await getToken();
+          return {
+            ...request,
+            headers: {
+              ...request.headers,
+              authorization: `bearer ${token}`,
+            },
+          };
+        },
+      ],
     });
 
-    it('appends the given path to the baseUrl', async () => {
-      const { get, fetch } = setup({
-        baseUrl: 'http://localhost:3000',
-      });
+    await http.get('/api', { headers: { myHeader: 'myHeaderValue' } });
 
-      await get('/api');
+    expect(getToken).toHaveBeenCalled();
 
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api',
-        expect.any(Object)
-      );
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:1234/foo',
+      expect.objectContaining({
+        headers: {
+          authorization: 'bearer abc',
+          myHeader: 'myHeaderValue',
+        },
+      })
+    );
+  });
+
+  it('throws on non-200 responses', () => {
+    const errorResponse = { errors: { email: ['required'] } };
+    const { http } = setup({
+      fetch: createFetchMock({
+        response: errorResponse,
+        status: 400,
+        url: 'http://localhost:3000/foo',
+      }),
     });
 
-    it('pulls an auth token and appends it as the "Authorization" header', async () => {
-      const { get, fetch } = setup({
-        getAuthToken: jest.fn(() => 'AUTH_TOKEN'),
-      });
-
-      await get('/api');
-
-      expect(fetch).toHaveBeenCalledWith(expect.any(String), {
+    expect.assertions(1);
+    return expect(http.get('/foo')).rejects.toEqual({
+      data: errorResponse,
+      headers: expect.any(Headers),
+      request: {
+        headers: {},
         method: 'GET',
-        headers: new Headers({
-          Authorization: 'Bearer AUTH_TOKEN',
-        }),
-      });
-    });
-
-    it('treats all non-2xx response statuses as errors', () => {
-      const errorRes = {
-        message: 'Unauthorized',
-        statusCode: 'ACCESS_DENIED',
-      };
-
-      const fetch = createFetchMock(errorRes, 404);
-      const { get } = setup({
-        fetch,
-      });
-
-      return expect(get('/api')).rejects.toEqual(errorRes);
+        url: 'http://localhost:3000/foo',
+      },
+      status: 400,
+      url: 'http://localhost:3000/foo',
     });
   });
 
-  describe('.post()', () => {
-    it('calls options.fetch', async () => {
-      const { post, fetch } = setup();
-
-      await post('/api', { foo: 'bar' });
-
-      expect(fetch).toHaveBeenCalled();
+  it('does not blow up for empty 204 responses', async () => {
+    const { http } = setup({
+      fetch: createFetchMock({
+        response: undefined,
+        status: 204,
+      }),
     });
 
-    it('appends the given path to the baseUrl', async () => {
-      const { post, fetch } = setup({
-        baseUrl: 'http://localhost:3000',
-      });
+    expect.assertions(1);
+    const res = await http.get('/foo');
 
-      await post('/api', { foo: 'bar' });
+    expect(res).toEqual({
+      data: {},
+      headers: expect.any(Headers),
+      request: expect.any(Object),
+      status: 204,
+      url: expect.any(String),
+    });
+  });
 
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api',
-        expect.any(Object)
-      );
+  it('calls error listeners', async () => {
+    const listener = jest.fn();
+    const { http } = setup({
+      fetch: jest.fn().mockResolvedValue(
+        new Response(JSON.stringify('server error'), {
+          status: 500,
+          url: 'http://localhost:3000',
+        })
+      ),
+      errorListeners: [listener],
     });
 
-    it('pulls an auth token and appends it as the "Authorization" header', async () => {
-      const { post, fetch } = setup({
-        getAuthToken: jest.fn(() => 'AUTH_TOKEN'),
-      });
+    expect.assertions(2);
+    await expect(http.get('/foo')).rejects.toEqual({
+      data: 'server error',
+      status: 500,
+      headers: expect.any(Headers),
+      request: expect.any(Object),
+      url: expect.any(String),
+    });
 
-      await post('/api', { foo: 'bar' });
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 500,
+      })
+    );
+  });
 
-      expect(fetch).toHaveBeenCalledWith(expect.any(String), {
+  it('handles network errors', async () => {
+    const error = new Error('failed to fetch');
+    const { http } = setup({
+      fetch: jest.fn().mockRejectedValue(error),
+    });
+
+    expect.assertions(1);
+    return expect(http.get('/foo')).rejects.toEqual(error);
+  });
+
+  it('can send json in the request', async () => {
+    const { http, fetch } = setup();
+    const payload = { email: 'test@example.com' };
+
+    await http.post('/api', payload);
+
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api',
+      expect.objectContaining({
         method: 'POST',
-        headers: new Headers({
-          Authorization: 'Bearer AUTH_TOKEN',
-        }),
-        body: { foo: 'bar' },
-      });
+        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+    );
+  });
+
+  it('can send custom payloads', async () => {
+    const { http, fetch } = setup();
+    const payload = new URLSearchParams();
+    payload.append('username', 'test@example.com');
+
+    await http.post('/api', null, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: payload,
     });
 
-    it('treats all non-2xx response statuses as errors', () => {
-      const errorRes = {
-        message: 'Unauthorized',
-        statusCode: 'ACCESS_DENIED',
-      };
-
-      const fetch = createFetchMock(errorRes, 404);
-      const { post } = setup({
-        fetch,
-      });
-
-      return expect(post('/api')).rejects.toEqual(errorRes);
-    });
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:3000/api',
+      expect.objectContaining({
+        method: 'POST',
+        body: payload,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      })
+    );
   });
 });
