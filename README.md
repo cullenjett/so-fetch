@@ -27,7 +27,27 @@ export const http = createClient({
       ? 'http://www.my-api.com'
       : 'http://dev.my-api.com',
   fetch: window.fetch,
-  getAuthToken: () => window.localStorage.getItem('authToken'),
+  requestInterceptors: [
+    async (request) => {
+      const authToken = await getAuthToken();
+      return {
+        ...request,
+        headers: {
+          ...request.headers,
+          authorization: `Bearer ${authToken}`,
+        },
+      };
+    },
+  ],
+  errorListeners: [
+    (response) => {
+      if (response instanceof Error) {
+        return;
+      }
+
+      captureErrorMetric(response);
+    },
+  ],
 });
 ```
 
